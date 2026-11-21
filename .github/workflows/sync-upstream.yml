@@ -1,0 +1,60 @@
+name: Sync with upstream
+
+# 定时把上游 HeyPuter/everything 的最新提交快进合并到本 fork。
+# 若本 fork 已产生冲突改动，GitHub 会返回 409，届时需手动解决。
+
+on:
+  schedule:
+    # 每天 03:17 UTC（北京时间 11:17）
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "要同步的分支"
+        required: false
+        default: "main"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Fast-forward from HeyPuter/everything
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge upstream via API
+        env:
+          # 若 GITHUB_TOKEN 权限不足，可在仓库 Secrets 里配置 UPSTREAM_SYNC_TOKEN（PAT，需 repo 权限）
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.inputs.branch || 'main' }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Syncing ${REPO} branch ${BRANCH} from upstream..."
+          code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+            -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/merge-upstream" \
+            -d "{\"branch\":\"${BRANCH}\"}")
+          echo "HTTP ${code}"
+          cat /tmp/resp.json
+          echo
+          case "${code}" in
+            200)
+              echo "SYNC_OK"
+              ;;
+            409)
+              echo "SYNC_CONFLICT"
+              exit 1
+              ;;
+            *)
+              echo "SYNC_FAILED"
+              exit 1
+              ;;
+          esac
